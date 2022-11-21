@@ -93,8 +93,7 @@ class Scenario:
 	def getCities( self ):
 		return self._cities
 
-
-	def randperm( self, n ):				#isn't there a numpy function that does this and even gets called in Solver?
+	def randperm( self, n ):
 		perm = np.arange(n)
 		for i in range(n):
 			randind = random.randint(i,n-1)
