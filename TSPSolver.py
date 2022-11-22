@@ -1,27 +1,21 @@
 #!/usr/bin/python3
 
 from which_pyqt import PYQT_VER
-if PYQT_VER == 'PYQT5':
-	from PyQt5.QtCore import QLineF, QPointF
-elif PYQT_VER == 'PYQT4':
-	from PyQt4.QtCore import QLineF, QPointF
-else:
-	raise Exception('Unsupported Version of PyQt: {}'.format(PYQT_VER))
-
-
+from PyQt5.QtCore import QLineF, QPointF
 
 import time
 import numpy as np
 from TSPClasses import *
 import heapq
 import itertools
+import heapq as hq
+from collections import OrderedDict
 
 class bnb_node:
-	def __init__( self, nodes_traversed, cur_lower_bound, min_cost_matrix ):
-		self.nodes_traversed   = nodes_traversed
-		self.lower_bound  = cur_lower_bound
+	def __init__( self, nodes_traversed, min_cost_matrix, cur_lower_bound ):
+		self.nodes_traversed = nodes_traversed
 		self.matrix = min_cost_matrix
-
+		self.cost = cur_lower_bound
 
 
 class TSPSolver:
@@ -103,63 +97,64 @@ class TSPSolver:
 	def branchAndBound(self, time_allowance=60.0):
 		results = {}
 		cities = self._scenario.getCities()
-		ncities = len(cities)
-		foundTour = False
+		self.foundTour = False
 		count = 0
-		bssf = 0  # was none before (not sure why?)
+		self.heap = []  # initialize priority queue
+		self.bssf = None
 		start_time = time.time()
 		matrix = self.setInitalCostMatrix(cities)
 		# what is the difference between bssf and bound
 		# do we update the bssf with the bound?
-		reduced_matrix, bssf = self.get_reduce_cost_matrix(matrix, bssf, [])
 		# 2. find a random path to get a max bound (save as global variable)
-		# 3. starting with the first city pass it into recursive function
-		nodes_traversed = [0] # used to be cities[0] when it was the actual city object, now want just index
+		self.bssf = TSPSolution(self.defaultRandomTour().get('soln').route)
+		if self.bssf.cost != float('infinity'):
+			self.foundTour = True
 
-		random_results = self.defaultRandomTour()
-		max_up_bound = random_results['cost']  # it can't get any worse than this!
-		# not sure how to use this yet... should play a part in the pruning probably
+		nodes_traversed = OrderedDict({0: cities[0]})
+		reduced_matrix, cost = self.get_reduce_cost_matrix(matrix, 0, {})
+		parent_node = bnb_node(nodes_traversed, reduced_matrix, cost)
+		self.check_children(parent_node, cities)
+		while len(self.heap) != 0:
+			self.check_children(heapq.heappop(self.heap), cities)
 
-		parent_node = bnb_node(nodes_traversed, bssf, reduced_matrix)
-		best_solution = self.check_children(parent_node, cities,0)
-		# best_solution = best city node which contains the best path traversed to get the lowest bound
+		# pop the queue and run the check_children again.
 
 		end_time = time.time()
-		results['cost'] = bssf.cost if foundTour else math.inf
+		results['cost'] = self.bssf.cost if self.foundTour else math.inf
 		results['time'] = end_time - start_time
 		results['count'] = count
-		results['soln'] = bssf
+		results['soln'] = self.bssf  # this will be the path, aka the traversedNodes
 		results['max'] = None
 		results['total'] = None
 		results['pruned'] = None
 		pass
-		# TODO:
-		# this wont quite work yet, because the traversedNodes is a list of cities, not the indexes.
-		# do I change it so its to lists? a list of indexes and cities??
-		# would there ever be a need to have the actual city in the list or can I always just do the index...
-	def check_children(self, parent_node, cities, city_start_index):
+
+	def check_children(self, parent_node, cities):
+		# check if we have found a full path
+		cities_remaining = len(cities) - len(parent_node.nodes_traversed)
+		if cities_remaining == 0:
+			self.foundTour = True
+			self.bssf = TSPSolution(parent_node.nodes_traversed)
+			return
+
+		city_start_index = list(parent_node.nodes_traversed.keys())[-1]  # get last item
 		# city_start_index will be the row index
-		# look at all the children and generate their bnb node( so find the reduced cost matrix and the updated bssf and add the node traveling to the list of nodes
-		# loop through all cities (skipp any that are already in parent_node.nodes_traversed)
 		for col_index, city_dest in enumerate(cities):
-			if city_dest not in parent_node.nodes_traversed: # want to skip cities that are already in our nodes_traversed list
-				bssf = parent_node.lower_bound
-				updated_nodes_traversed = parent_node.nodes_traversed + [city_dest]
-				# updated_nodes_traversed.append(city_dest)
+			if col_index not in parent_node.nodes_traversed:  # skip cities that are already in our nodes_traversed list
+				cost = parent_node.cost
+				updated_nodes_traversed = parent_node.nodes_traversed
+				updated_nodes_traversed.update({col_index: city_dest})
 				updated_cost_matrix = self.set_child_reduced_cost_matrix(parent_node.matrix, city_start_index, col_index)
-				updated_reduced_cost_matrix, bssf = self.get_reduce_cost_matrix(updated_cost_matrix, bssf,updated_nodes_traversed )
-				# this could be when use the upper bound.
-				# because if the BSSF is worse than the upper bound, we already know we don't even want to look at it or add it to the stack.
-				# immediately pruned
-				childNode = bnb_node(updated_nodes_traversed, updated_reduced_cost_matrix, bssf)
-				# where do I store the child? in a list and then after we run through everything just find whichever child has best bssf?
-
-
-		return parent_node
-		# which ever has the best bssf call this function again.
-		# for all others add it to the queue
-		# also want to do some fancy thing where we figure out what to pop of the BSSF based on the depth that node is in the tree
-		# the idea being that the nodes that are further in the tree have a better estimate of the BSSF so should be prioritized
+				updated_reduced_cost_matrix, cost = self.get_reduce_cost_matrix(updated_cost_matrix, cost,updated_nodes_traversed )
+				# if the BSSF is worse than the global_bssf immediately prune
+				# self.bssf.cost doesn't exist. try again. I think im confusing the difference between the bssf the result from the function, the dictionary the class I made.
+				if cost < self.bssf.cost:
+					childNode = bnb_node(updated_nodes_traversed, updated_reduced_cost_matrix, cost)
+					# maybe add the bssf value + the number of remaining cities to explore
+					# this way if you have few trees to explore you hopefully have a smaller number
+					priority = cost + cities_remaining
+					heapq.heappush(self.heap, (priority, childNode))  # adding it to the queue
+				# everytime this isn't true, we increment the total pruned.
 
 	def set_child_reduced_cost_matrix(self, matrix, city_start_index, city_end_index):
 		# return the reduced cost matrix with all the infinities on the row and columns of the matrix and the opposite index
@@ -168,9 +163,6 @@ class TSPSolver:
 		matrix[city_end_index, city_start_index] = float('infinity')
 		return matrix
 
-# todo: this function is still a little problematic
-	# want to make sure that we only update the bound if it is for a row or a column not already in our list of points
-	# that way we dont get infinities accidentally added to our bound, when its really because we just marked them all of as infinity
 	def get_reduce_cost_matrix(self, matrix, bound, visited_nodes):
 		# if a row_index matches the visited_node index, skip (we already know it will be all infinity)
 		for row_index, matrix_row in enumerate(matrix):
@@ -185,8 +177,8 @@ class TSPSolver:
 
 		# if a col_index matches the visted_node index - the first column index (this wont be set yet, because we could still , skip (we already know it will be all infinity)
 		for col_index, matrix_col in enumerate(matrix.T):
-			# hopefully the [1:] gets it in a pythonic way
-			if col_index not in visited_nodes[1:]:
+
+			if col_index not in visited_nodes.keys() and col_index != 0:
 				min_num = matrix_col.min()
 				bound = min_num + bound # update bound
 				if min_num != float('infinity'):
