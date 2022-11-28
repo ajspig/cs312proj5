@@ -100,69 +100,99 @@ class TSPSolver:
 		results = {}
 		self.cities = self._scenario.getCities()
 		self.foundTour = False
-		count = 0  # what is this for??
+		self.count = 0
 		self.heap = []  # initialize priority queue
 		self.bssf = None
+		self.num_states = 1  # starts at one ofr the parent node
+		self.pruned = 0
+		max_heap_size = 0
 		start_time = time.time()
 		matrix = self.setInitalCostMatrix(self.cities)
 
 		# find a random path to save as initial bssf
 		self.bssf = TSPSolution(self.defaultRandomTour().get('soln').route)
-		if self.bssf.cost != float('infinity'):
-			self.foundTour = True
+		# if self.bssf.cost != float('infinity'):
+		# 	self.foundTour = True
+		# I am pretty sure we dont want to set this value
+
 
 		nodes_traversed = [self.cities[0]]
 		reduced_matrix, cost = self.get_reduce_cost_matrix(matrix, 0, [])
 		parent_node = bnb_node(nodes_traversed, reduced_matrix, cost)
 		self.check_children(parent_node)
-		while len(self.heap) != 0:
-			possible_bssf = heapq.heappop(self.heap)[2]  # pop the queue
+
+		while len(self.heap) != 0 and time.time() - start_time < time_allowance:  # taken out for debugging purposes
+			# before we pop check the value of the heap and update the max value accordingly
+			if len(self.heap) > max_heap_size:
+				max_heap_size = len(self.heap)
+
+			heap_tuple = heapq.heappop(self.heap)  # pop the queue
+			possible_bssf = heap_tuple[2]
+			#self.printFunc(possible_bssf.nodes_traversed, possible_bssf.cost, heap_tuple[0])
+			# create a function that prints the letters in the visited nodes list and the total cost
+
 			# check how it compares to BSSF
-			if possible_bssf.cost < self.bssf.cost:
+			if possible_bssf.cost <= self.bssf.cost:
 				self.check_children(possible_bssf)  # run check_children again
+			else:
+				self.pruned = self.pruned + 1
+
 
 		end_time = time.time()
 		results['cost'] = self.bssf.cost if self.foundTour else math.inf
 		results['time'] = end_time - start_time
-		# number of BSSF updates (aka number of times solution was found that was better than current BSSF)
-		# value of 0
-		results['count'] = count
-		results['soln'] = self.bssf  # this will be the path, aka the traversedNodes
-		results['max'] = 0  # max number of stored states at a given time
-		results['total'] = 0  # total number of states created
-		results['pruned'] = 0  # total number of states pruned
+		results['count'] = self.count
+		results['soln'] = self.bssf  # this will be the path, aka the traversedNodes wrapped in a TSPSolution object
+		results['max'] = max_heap_size  # max number of stored states at a given time
+		results['total'] = self.num_states  # total number of states created
+		results['pruned'] = self.pruned  # total number of states pruned
+		# this is cities pruned instead of adding it to the queue and pruned after being taken off the queue
+		# doesn't include sub-states that weren't created.
 		return results
 
 	def check_children(self, parent_node):
 		# check if we have found a full path
 		cities_remaining = len(self.cities) - len(parent_node.nodes_traversed)
 		if cities_remaining == 0:
-			# this is my problem, im not checking if it's a better solution then before
 			self.foundTour = True
+			# also check there is a path back to the start and that its cost is accounted for
+			parent_node.cost = parent_node.cost + parent_node.matrix[parent_node.nodes_traversed[-1]._index][0]  # the column will always be 0 as long as it starts at A
 			if self.bssf.cost > parent_node.cost:
-				self.bssf = TSPSolution(parent_node.nodes_traversed)
-			# otherwise, keep the best solution so far the same
-			# I think I need to keep track of how many times this happens
+				# print("found a better solution!", self.bssf.cost, parent_node.cost)
+				# self.printFunc(parent_node.nodes_traversed,parent_node.cost,"not sure")
+				self.bssf.route = parent_node.nodes_traversed
+				self.bssf.cost = parent_node.cost
+				self.count = self.count + 1
 			return
-		city_start = parent_node.nodes_traversed[-1] # get last item
+		city_start = parent_node.nodes_traversed[-1]  # get last item
 		city_start_index = self.cities.index(city_start)  # this is the row index
 		for col_index, city_dest in enumerate(self.cities):
 			if city_dest not in parent_node.nodes_traversed:  # skip cities that are already in our nodes_traversed list
-				child_matrix = copy.deepcopy(parent_node.matrix) # copying so we don't override it
+				child_matrix = copy.deepcopy(parent_node.matrix)  # copying so we don't override it
 				cost = parent_node.cost
 				updated_nodes_traversed = parent_node.nodes_traversed + [city_dest]
+				# update cost with index (citystart, city end) cost
+				cost = cost + child_matrix[city_start_index][col_index]
 				updated_cost_matrix = self.set_child_reduced_cost_matrix(child_matrix, city_start_index, col_index)
 				updated_reduced_cost_matrix, cost = self.get_reduce_cost_matrix(updated_cost_matrix, cost, updated_nodes_traversed )
 				# if the BSSF is worse than the global_bssf immediately prune
-				if cost < self.bssf.cost:
+				if cost <= self.bssf.cost:
+					self.num_states = self.num_states + 1
 					childNode = bnb_node(updated_nodes_traversed, updated_reduced_cost_matrix, cost)
-					# add the bssf value + the number of remaining cities to explore. this way if you have few trees to explore you hopefully have a smaller number
-					priority = cost + cities_remaining
+					# add the bssf value and divide by the number of remaining cities to explore.
+					# this way if you have few trees to explore you hopefully have a smaller number
 					index = next(self.counter)  # object index
-					heapq.heappush(self.heap, (priority, index, childNode))  # adding it to the queue
-					# push just pushes, it doesnt insert based of priority,
+					priority = cost + cost/ math.factorial(cities_remaining)
+					#priority = cost
+					#index = cities_remaining
+					# print("its smaller ", int(priority), updated_nodes_traversed)
+					heapq.heappush(self.heap, (index, priority, childNode))  # adding it to the queue
+					# push just pushes, it doesn't insert based of priority,
 					# do I need to sort it later?
-				# everytime this isn't true, we increment the total pruned.
+					#self.printFunc(childNode.nodes_traversed, childNode.cost, priority)
+
+				else:
+					self.pruned = self.pruned +1
 
 	def set_child_reduced_cost_matrix(self, matrix, city_start_index, city_end_index):
 		# return the reduced cost matrix with all the infinities on the row and columns of the matrix and the opposite index
@@ -178,8 +208,8 @@ class TSPSolver:
 			if city not in visited_nodes:
 				min_num = matrix_row.min()  # the minimum value of this row
 				cost = min_num + cost  # update cost
-				# if the min_num is infinity and therefore the bound will be inifinty
-				# we dont want to subtract infinity becuase it results in nan
+				# if the min_num is infinity and therefore the bound will be infinity
+				# we don't want to subtract infinity from infinity because it results in nan
 				if min_num != float('infinity'):
 					matrix[row_index] = matrix_row - min_num # subtracts the minimum value from the row
 				# if the smallest number is infinity, we dont need to do anything to the row
@@ -198,16 +228,18 @@ class TSPSolver:
 		return matrix, cost
 
 	def setInitalCostMatrix(self, cities):
-		# matrix = [[None] * len(cities) for _ in range(len(cities))]
 		matrix = np.zeros((len(cities), len(cities)))
 		for row_index, city_start in enumerate(cities):
 			for col_index, city_dest in enumerate(cities):
-				if city_start != city_dest:  # checking if they are the same city
-					matrix[row_index][col_index] = city_start.costTo(city_dest)
-					# TODO: what does this return if there is no distance between those nodes? want it to return infinity
-				else:
-					matrix[row_index][col_index] = float("infinity")  # setting the diagonal to infinity
+				matrix[row_index][col_index] = city_start.costTo(city_dest)
 		return matrix
+
+	def printFunc(self, list, cost, priority):
+		# given a list of bnb nodes print out the alphabetical version
+		for city in list:
+			print(city._name, end = '')
+		print(" ",cost, priority)
+		pass
 
 
 
