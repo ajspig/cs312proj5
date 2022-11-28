@@ -181,15 +181,12 @@ class TSPSolver:
 					childNode = bnb_node(updated_nodes_traversed, updated_reduced_cost_matrix, cost)
 					# add the bssf value and divide by the number of remaining cities to explore.
 					# this way if you have few trees to explore you hopefully have a smaller number
-					index = next(self.counter)  # object index
-					priority = cost + cost/ math.factorial(cities_remaining)
-					#priority = cost
+					index = next(self.counter) + cities_remaining  # object index
+					priority = cost/ math.factorial(len(updated_nodes_traversed))
+					#priority = cost/ (cost*cities_remaining)
 					#index = cities_remaining
-					# print("its smaller ", int(priority), updated_nodes_traversed)
-					heapq.heappush(self.heap, (index, priority, childNode))  # adding it to the queue
-					# push just pushes, it doesn't insert based of priority,
-					# do I need to sort it later?
-					#self.printFunc(childNode.nodes_traversed, childNode.cost, priority)
+					#print("its smaller ", int(priority), updated_nodes_traversed)
+					heapq.heappush(self.heap, (priority, index, childNode))  # adding it to the queue
 
 				else:
 					self.pruned = self.pruned +1
